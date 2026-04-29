@@ -12,7 +12,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/placeholder-project-id"
+      "url": "https://u.expo.dev/59c70c7f-40cf-4679-a6d8-c2615be3c8fe"
     },
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -50,9 +50,11 @@
       "typedRoutes": true
     },
     "extra": {
+      "router": {},
       "eas": {
-        "projectId": "placeholder-project-id"
+        "projectId": "59c70c7f-40cf-4679-a6d8-c2615be3c8fe"
       }
-    }
+    },
+    "owner": "fbalsamo"
   }
 }
