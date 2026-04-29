@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, Alert, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { supabase } from '../../lib/supabase';
 import { Card, NETWORK_LABELS } from '../../lib/types';
 import { useSession } from '../../hooks/useSession';
@@ -55,7 +56,8 @@ export default function ProfileScreen() {
     if (value) {
       const { status } = await Notifications.requestPermissionsAsync();
       if (status === 'granted') {
-        const token = await Notifications.getExpoPushTokenAsync();
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+        const token = await Notifications.getExpoPushTokenAsync({ projectId });
         if (session?.user) {
           await supabase.from('user_push_tokens').upsert({
             user_id: session.user.id,

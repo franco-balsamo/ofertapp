@@ -8,13 +8,19 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "scheme": "ofertapp",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/placeholder-project-id"
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.ofertapp.app"
     },
     "android": {
@@ -42,6 +48,11 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "placeholder-project-id"
+      }
     }
   }
 }
