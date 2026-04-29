@@ -1,0 +1,96 @@
+import logging
+import random
+import time
+
+from playwright.sync_api import sync_playwright
+
+from .base import BaseScraper, Discount
+from .galicia import infer_category
+
+logger = logging.getLogger(__name__)
+
+
+class NaranjaXScraper(BaseScraper):
+    bank_slug = 'naranja-x'
+    bank_url = 'https://www.naranjax.com/beneficios'
+
+    def run(self) -> list[Discount]:
+        discounts: list[Discount] = []
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent=(
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/120.0.0.0 Safari/537.36'
+                    )
+                )
+                page = context.new_page()
+                page.goto(self.bank_url, wait_until='networkidle', timeout=30000)
+                time.sleep(random.uniform(2, 4))
+
+                # Naranja X is a SPA — wait longer for React render
+                try:
+                    page.wait_for_selector('[class*="benefit"], [class*="promo"], [class*="card"], article', timeout=15000)
+                except Exception:
+                    logger.warning('NaranjaX: selector not found, trying generic')
+
+                selectors = [
+                    '[class*="BenefitCard"]',
+                    '[class*="benefit-card"]',
+                    '[class*="PromoCard"]',
+                    '[class*="promo-card"]',
+                    '[class*="OfferCard"]',
+                    '[class*="card"]',
+                    'article',
+                ]
+                items = []
+                for sel in selectors:
+                    items = page.query_selector_all(sel)
+                    if len(items) > 2:
+                        break
+
+                for item in items:
+                    try:
+                        title_el = item.query_selector('h2, h3, h4, p[class*="title"], span[class*="title"], [class*="titulo"], [class*="nombre"]')
+                        pct_el = item.query_selector('[class*="descuento"], [class*="percent"], [class*="discount"], strong')
+
+                        if not title_el:
+                            continue
+
+                        title = title_el.inner_text().strip()
+                        if not title or len(title) < 3:
+                            continue
+
+                        pct: int | None = None
+                        if pct_el:
+                            pct_text = pct_el.inner_text().strip().replace('%', '').strip()
+                            try:
+                                pct = int(pct_text)
+                            except ValueError:
+                                pass
+
+                        link_el = item.query_selector('a')
+                        source = self.bank_url
+                        if link_el:
+                            href = link_el.get_attribute('href') or ''
+                            source = href if href.startswith('http') else f'https://www.naranjax.com{href}'
+
+                        discounts.append(
+                            Discount(
+                                title=title,
+                                bank_slug=self.bank_slug,
+                                source_url=source,
+                                percentage=pct,
+                                category=infer_category(title),
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning(f'NaranjaX: error parsing item: {e}')
+
+                browser.close()
+        except Exception as e:
+            logger.error(f'NaranjaX scraper failed: {e}')
+
+        return discounts

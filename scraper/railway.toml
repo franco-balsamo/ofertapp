@@ -1,0 +1,9 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python main.py"
+restartPolicyType = "ON_FAILURE"
+
+# Cron: cada 4 horas
+# Configurar en Railway dashboard: 0 */4 * * *
