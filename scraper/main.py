@@ -6,6 +6,9 @@ import logging
 import os
 from datetime import datetime
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from supabase import create_client
 
 from scrapers import GaliciaScraper, SantanderScraper, BbvaScraper, MacroScraper, NaranjaXScraper, ModoScraper
