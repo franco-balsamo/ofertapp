@@ -1,4 +1,4 @@
-supabase==2.3.4
+supabase==2.24.0
 playwright==1.43.0
 beautifulsoup4==4.12.3
 requests==2.31.0
