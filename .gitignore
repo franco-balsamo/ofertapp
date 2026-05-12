@@ -28,6 +28,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Scraper debug output (HTML de terceros puede contener API keys)
+scraper/debug_output/
+
 # Logs
 *.log
 npm-debug.*
