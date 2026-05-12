@@ -1,93 +1,86 @@
 import logging
-import random
-import time
+import re
 
-from playwright.sync_api import sync_playwright
+import requests
 
 from .base import BaseScraper, Discount
-from .galicia import infer_category
 
 logger = logging.getLogger(__name__)
+
+API_URL = 'https://go.bbva.com.ar/willgo/fgo/API/v3/communications?destacado=true&pager=0'
+PAGE_URL = 'https://www.bbva.com.ar/beneficios/'
+
+CATEGORY_MAP = {
+    'super': 'supermercado',
+    'jumbo': 'supermercado',
+    'coto': 'supermercado',
+    'disco': 'supermercado',
+    'farmac': 'farmacia',
+    'combust': 'combustible',
+    'ypf': 'combustible',
+    'shell': 'combustible',
+    'ropa': 'indumentaria',
+    'indument': 'indumentaria',
+    'moda': 'indumentaria',
+    'viaje': 'viajes',
+    'hotel': 'viajes',
+    'turismo': 'viajes',
+    'electro': 'electronica',
+    'tecnolog': 'electronica',
+    'gastro': 'gastronomia',
+    'restaurant': 'gastronomia',
+    'helader': 'gastronomia',
+    'caf': 'gastronomia',
+    'bonvivir': 'gastronomia',
+    'beauty': 'otros',
+    'belleza': 'otros',
+}
+
+
+def infer_category(text: str) -> str:
+    t = text.lower()
+    for kw, cat in CATEGORY_MAP.items():
+        if kw in t:
+            return cat
+    return 'otros'
 
 
 class BbvaScraper(BaseScraper):
     bank_slug = 'bbva'
-    bank_url = 'https://www.bbva.com.ar/general/personas/tarjetas/beneficios.html'
+    bank_url = PAGE_URL
 
     def run(self) -> list[Discount]:
         discounts: list[Discount] = []
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent=(
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                        'AppleWebKit/537.36 (KHTML, like Gecko) '
-                        'Chrome/120.0.0.0 Safari/537.36'
-                    )
-                )
-                page = context.new_page()
-                page.goto(self.bank_url, wait_until='networkidle', timeout=30000)
-                time.sleep(random.uniform(1.5, 3))
+            resp = requests.get(API_URL, timeout=15)
+            resp.raise_for_status()
+            data = resp.json().get('data', [])
 
-                try:
-                    page.wait_for_selector('[class*="benefit"], [class*="promo"], [class*="descuento"], article', timeout=10000)
-                except Exception:
-                    logger.warning('BBVA: selector not found, trying generic')
+            for item in data:
+                title = item.get('cabecera', '').strip()
+                if not title:
+                    continue
 
-                selectors = [
-                    '[class*="benefit"]',
-                    '[class*="promo"]',
-                    '[class*="oferta"]',
-                    '[class*="descuento"]',
-                    'article',
-                    '.card',
-                ]
-                items = []
-                for sel in selectors:
-                    items = page.query_selector_all(sel)
-                    if len(items) > 2:
-                        break
-
-                for item in items:
+                subcab = item.get('subcabecera', '') or ''
+                pct: int | None = None
+                pct_matches = re.findall(r'(\d+)%', subcab)
+                if pct_matches:
                     try:
-                        title_el = item.query_selector('h2, h3, h4, [class*="title"], [class*="titulo"], [class*="heading"]')
-                        pct_el = item.query_selector('[class*="descuento"], [class*="percent"], [class*="porcentaje"]')
+                        pct = int(pct_matches[0])
+                    except ValueError:
+                        pass
 
-                        if not title_el:
-                            continue
+                discounts.append(Discount(
+                    title=title,
+                    bank_slug=self.bank_slug,
+                    source_url=PAGE_URL,
+                    description=subcab,
+                    percentage=pct,
+                    category=infer_category(f'{title} {subcab}'),
+                    valid_from=item.get('fechaDesde'),
+                    valid_to=item.get('fechaHasta'),
+                ))
 
-                        title = title_el.inner_text().strip()
-                        if not title or len(title) < 3:
-                            continue
-
-                        pct: int | None = None
-                        if pct_el:
-                            pct_text = pct_el.inner_text().strip().replace('%', '').strip()
-                            try:
-                                pct = int(pct_text)
-                            except ValueError:
-                                pass
-
-                        link_el = item.query_selector('a')
-                        source = self.bank_url
-                        if link_el:
-                            href = link_el.get_attribute('href') or ''
-                            source = href if href.startswith('http') else f'https://www.bbva.com.ar{href}'
-
-                        discounts.append(
-                            Discount(
-                                title=title,
-                                bank_slug=self.bank_slug,
-                                source_url=source,
-                                percentage=pct,
-                                category=infer_category(title),
-                            )
-                        )
-                    except Exception as e:
-                        logger.warning(f'BBVA: error parsing item: {e}')
-
-                browser.close()
         except Exception as e:
             logger.error(f'BBVA scraper failed: {e}')
 

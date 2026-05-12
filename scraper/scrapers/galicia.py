@@ -1,103 +1,138 @@
 import logging
-import random
-import time
+import re
 
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 
 from .base import BaseScraper, Discount
 
 logger = logging.getLogger(__name__)
 
-CATEGORY_MAP = {
-    'supermercado': 'supermercado',
+MODEL_URL = 'https://www.galicia.ar/personas/promociones.model.json'
+PAGE_URL = 'https://www.galicia.ar/personas/promociones'
+
+HEADERS = {
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+    'referer': PAGE_URL,
+    'accept': 'application/json',
+}
+
+INFER_MAP = {
     'super': 'supermercado',
-    'gastronomia': 'gastronomia',
-    'restaurant': 'gastronomia',
-    'farmacia': 'farmacia',
-    'combustible': 'combustible',
+    'jumbo': 'supermercado',
+    'coto': 'supermercado',
+    'farmac': 'farmacia',
+    'combust': 'combustible',
+    'ypf': 'combustible',
+    'shell': 'combustible',
     'ropa': 'indumentaria',
-    'indumentaria': 'indumentaria',
+    'indument': 'indumentaria',
     'viaje': 'viajes',
+    'hotel': 'viajes',
     'turismo': 'viajes',
     'electro': 'electronica',
+    'gastro': 'gastronomia',
+    'restaurant': 'gastronomia',
+    'caf': 'gastronomia',
+    'entrete': 'entretenimiento',
+    'espect': 'entretenimiento',
 }
 
 
 def infer_category(text: str) -> str:
-    text_lower = text.lower()
-    for keyword, category in CATEGORY_MAP.items():
-        if keyword in text_lower:
-            return category
+    t = text.lower()
+    for kw, cat in INFER_MAP.items():
+        if kw in t:
+            return cat
     return 'otros'
+
+
+EYEBROW_CATEGORY = {
+    'gastronomí': 'gastronomia',
+    'gastronom': 'gastronomia',
+    'supermercado': 'supermercado',
+    'indumentaria': 'indumentaria',
+    'farmacia': 'farmacia',
+    'combustible': 'combustible',
+    'viaje': 'viajes',
+    'turismo': 'viajes',
+    'electro': 'electronica',
+    'espectáculo': 'entretenimiento',
+    'espectaculo': 'entretenimiento',
+    'hogar': 'otros',
+    'vehículo': 'otros',
+    'vehiculo': 'otros',
+}
+
+
+def category_from_eyebrow(eyebrow: str) -> str:
+    low = eyebrow.lower().replace('﻿', '').replace('​', '')
+    for kw, cat in EYEBROW_CATEGORY.items():
+        if kw in low:
+            return cat
+    return 'otros'
+
+
+def parse_pct(html: str) -> int | None:
+    text = BeautifulSoup(html, 'html.parser').get_text()
+    matches = re.findall(r'(\d+)%', text)
+    if matches:
+        try:
+            return int(matches[0])
+        except ValueError:
+            pass
+    return None
+
+
+def walk(obj, comp_suffix, results):
+    if isinstance(obj, dict):
+        if obj.get(':type', '').endswith(comp_suffix):
+            results.append(obj)
+            return
+        for v in obj.values():
+            walk(v, comp_suffix, results)
+    elif isinstance(obj, list):
+        for item in obj:
+            walk(item, comp_suffix, results)
 
 
 class GaliciaScraper(BaseScraper):
     bank_slug = 'galicia'
-    bank_url = 'https://www.galicia.ar/personas/beneficios'
+    bank_url = PAGE_URL
 
     def run(self) -> list[Discount]:
         discounts: list[Discount] = []
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent=(
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                        'AppleWebKit/537.36 (KHTML, like Gecko) '
-                        'Chrome/120.0.0.0 Safari/537.36'
-                    )
-                )
-                page = context.new_page()
-                page.goto(self.bank_url, wait_until='networkidle', timeout=30000)
-                time.sleep(random.uniform(1.5, 3))
+            resp = requests.get(MODEL_URL, headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
 
-                # Wait for benefit cards to load
-                try:
-                    page.wait_for_selector('[class*="benefit"], [class*="promo"], article', timeout=10000)
-                except Exception:
-                    logger.warning('Galicia: selector not found, trying generic')
+            vsm_nodes: list[dict] = []
+            walk(data, 'verticalsecondarymodule', vsm_nodes)
 
-                items = page.query_selector_all('[class*="benefit-card"], [class*="promo-card"], .card-beneficio')
+            for node in vsm_nodes:
+                mod = node.get('verticalSecondaryModule', {})
+                eyebrow = (mod.get('eyebrow') or '').strip()
+                if 'PROMO' not in eyebrow.upper():
+                    continue
 
-                for item in items:
-                    try:
-                        title_el = item.query_selector('h2, h3, [class*="title"], [class*="nombre"]')
-                        pct_el = item.query_selector('[class*="descuento"], [class*="percent"], [class*="porcentaje"]')
+                title = (mod.get('title') or '').strip()
+                if not title:
+                    continue
 
-                        if not title_el:
-                            continue
+                desc_html = mod.get('description', '') or ''
+                pct = parse_pct(desc_html)
+                desc_text = BeautifulSoup(desc_html, 'html.parser').get_text(' ').strip() or None
 
-                        title = title_el.inner_text().strip()
-                        if not title:
-                            continue
+                discounts.append(Discount(
+                    title=title,
+                    bank_slug=self.bank_slug,
+                    source_url=PAGE_URL,
+                    description=desc_text,
+                    percentage=pct,
+                    category=category_from_eyebrow(eyebrow),
+                ))
 
-                        pct: int | None = None
-                        if pct_el:
-                            pct_text = pct_el.inner_text().strip().replace('%', '')
-                            try:
-                                pct = int(pct_text)
-                            except ValueError:
-                                pass
-
-                        link_el = item.query_selector('a')
-                        source = self.bank_url
-                        if link_el:
-                            href = link_el.get_attribute('href') or ''
-                            source = href if href.startswith('http') else f'https://www.galicia.ar{href}'
-
-                        discounts.append(
-                            Discount(
-                                title=title,
-                                bank_slug=self.bank_slug,
-                                source_url=source,
-                                percentage=pct,
-                                category=infer_category(title),
-                            )
-                        )
-                    except Exception as e:
-                        logger.warning(f'Galicia: error parsing item: {e}')
-
-                browser.close()
         except Exception as e:
             logger.error(f'Galicia scraper failed: {e}')
 

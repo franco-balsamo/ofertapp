@@ -1,93 +1,76 @@
 import logging
-import random
-import time
 
-from playwright.sync_api import sync_playwright
+import requests
 
 from .base import BaseScraper, Discount
-from .galicia import infer_category
 
 logger = logging.getLogger(__name__)
+
+API_URL = 'https://apipublic.macro.com.ar/v1/card-benefits/provinces/AR-C'
+API_KEY = 'xoQHgmQk50pnZtGXLOxHowzjBEl4z0E7677knlgnD4iEL6sm'
+PAGE_URL = 'https://www.macro.com.ar/beneficios'
+
+SECTOR_MAP = {
+    'Automotor y Combustible': 'combustible',
+    'Gastronomia': 'gastronomia',
+    'Indumentaria': 'indumentaria',
+    'Supermercados': 'supermercado',
+    'Farmacia': 'farmacia',
+    'Electro y Tecnologia': 'electronica',
+    'Entretenimiento': 'entretenimiento',
+    'Turismo': 'viajes',
+    'Hogar y Deco': 'otros',
+    'Librerias': 'otros',
+    'Jugueterias': 'otros',
+    'Bicicleterias': 'otros',
+}
 
 
 class MacroScraper(BaseScraper):
     bank_slug = 'macro'
-    bank_url = 'https://www.macro.com.ar/personas/tarjetas/descuentos-y-beneficios'
+    bank_url = PAGE_URL
 
     def run(self) -> list[Discount]:
         discounts: list[Discount] = []
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    user_agent=(
-                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                        'AppleWebKit/537.36 (KHTML, like Gecko) '
-                        'Chrome/120.0.0.0 Safari/537.36'
-                    )
-                )
-                page = context.new_page()
-                page.goto(self.bank_url, wait_until='networkidle', timeout=30000)
-                time.sleep(random.uniform(1.5, 3))
+            resp = requests.get(
+                API_URL,
+                headers={
+                    'apikey': API_KEY,
+                    'accept': 'application/json',
+                    'referer': 'https://www.macro.com.ar/',
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            promos = resp.json().get('promotions', [])
 
-                try:
-                    page.wait_for_selector('[class*="benefit"], [class*="promo"], [class*="descuento"], article', timeout=10000)
-                except Exception:
-                    logger.warning('Macro: selector not found, trying generic')
+            seen_names: set[str] = set()
+            for item in promos:
+                name = item.get('name', '').strip()
+                if not name or name in seen_names:
+                    continue
+                seen_names.add(name)
 
-                selectors = [
-                    '[class*="benefit-card"]',
-                    '[class*="promo-card"]',
-                    '[class*="descuento"]',
-                    '[class*="oferta"]',
-                    'article',
-                    '.card',
-                ]
-                items = []
-                for sel in selectors:
-                    items = page.query_selector_all(sel)
-                    if len(items) > 2:
-                        break
-
-                for item in items:
+                discount = item.get('discount')
+                pct: int | None = None
+                if discount is not None:
                     try:
-                        title_el = item.query_selector('h2, h3, h4, [class*="title"], [class*="titulo"], [class*="nombre"]')
-                        pct_el = item.query_selector('[class*="descuento"], [class*="percent"], [class*="porcentaje"]')
+                        pct = int(discount)
+                    except (ValueError, TypeError):
+                        pass
 
-                        if not title_el:
-                            continue
+                sector = item.get('sector', '')
+                category = SECTOR_MAP.get(sector, 'otros')
 
-                        title = title_el.inner_text().strip()
-                        if not title or len(title) < 3:
-                            continue
+                discounts.append(Discount(
+                    title=name,
+                    bank_slug=self.bank_slug,
+                    source_url=PAGE_URL,
+                    percentage=pct,
+                    category=category,
+                ))
 
-                        pct: int | None = None
-                        if pct_el:
-                            pct_text = pct_el.inner_text().strip().replace('%', '').strip()
-                            try:
-                                pct = int(pct_text)
-                            except ValueError:
-                                pass
-
-                        link_el = item.query_selector('a')
-                        source = self.bank_url
-                        if link_el:
-                            href = link_el.get_attribute('href') or ''
-                            source = href if href.startswith('http') else f'https://www.macro.com.ar{href}'
-
-                        discounts.append(
-                            Discount(
-                                title=title,
-                                bank_slug=self.bank_slug,
-                                source_url=source,
-                                percentage=pct,
-                                category=infer_category(title),
-                            )
-                        )
-                    except Exception as e:
-                        logger.warning(f'Macro: error parsing item: {e}')
-
-                browser.close()
         except Exception as e:
             logger.error(f'Macro scraper failed: {e}')
 

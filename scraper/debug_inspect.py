@@ -12,12 +12,12 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 BANK_URLS = {
-    'galicia':    'https://www.galicia.ar/personas/beneficios',
-    'santander':  'https://www.santander.com.ar/banco/online/beneficios',
-    'bbva':       'https://www.bbva.com.ar/personas/descuentos-y-beneficios.html',
-    'macro':      'https://www.macro.com.ar/beneficios',
+    'galicia':    'https://www.galicia.ar/personas/promociones',
+    'santander':  'https://www.santander.com.ar/personas/beneficios',
+    'bbva':       'https://www.bbva.com.ar/beneficios/',
+    'macro':      'https://www.macro.com.ar/macrobeneficios',
     'naranja-x':  'https://www.naranjax.com/beneficios',
-    'modo':       'https://www.modo.com.ar/beneficios',
+    'modo':       'https://www.modo.com.ar/promos',
 }
 
 UA = (
